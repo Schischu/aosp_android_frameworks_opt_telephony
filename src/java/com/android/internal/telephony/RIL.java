@@ -944,10 +944,19 @@ public final class RIL extends BaseCommands implements CommandsInterface {
     @Override
     public void
     dial(String address, int clirMode, UUSInfo uusInfo, Message result) {
+        if (PhoneNumberUtils.isEmergencyNumber(address)) {
+            dialEmergencyCall(address, clirMode, result);
+            return;
+        }
+
         RILRequest rr = RILRequest.obtain(RIL_REQUEST_DIAL, result);
 
         rr.mParcel.writeString(address);
         rr.mParcel.writeInt(clirMode);
+
+        rr.mParcel.writeInt(0);         // CallDetails.call_type
+        rr.mParcel.writeInt(1);         // CallDetails.call_domain
+        rr.mParcel.writeString("");     // CallDetails.getCsvFromExtras
 
         if (uusInfo == null) {
             rr.mParcel.writeInt(0); // UUS information is absent
@@ -959,6 +968,21 @@ public final class RIL extends BaseCommands implements CommandsInterface {
         }
 
         if (RILJ_LOGD) riljLog(rr.serialString() + "> " + requestToString(rr.mRequest));
+
+        send(rr);
+    }
+
+    private void
+    dialEmergencyCall(String address, int clirMode, Message result) {
+        RILRequest rr = RILRequest.obtain(RIL_REQUEST_DIAL_EMERGENCY, result);
+
+        rr.mParcel.writeString(address + "/");
+        rr.mParcel.writeInt(clirMode);
+
+        rr.mParcel.writeInt(0);        // CallDetails.call_type
+        rr.mParcel.writeInt(3);        // CallDetails.call_domain
+        rr.mParcel.writeString("");    // CallDetails.getCsvFromExtra
+        rr.mParcel.writeInt(0);        // Unknown
 
         send(rr);
     }
@@ -1108,6 +1132,9 @@ public final class RIL extends BaseCommands implements CommandsInterface {
                 = RILRequest.obtain(RIL_REQUEST_ANSWER, result);
 
         if (RILJ_LOGD) riljLog(rr.serialString() + "> " + requestToString(rr.mRequest));
+
+        rr.mParcel.writeInt(1);
+        rr.mParcel.writeInt(0);
 
         send(rr);
     }
@@ -2849,6 +2876,9 @@ public final class RIL extends BaseCommands implements CommandsInterface {
             case RIL_UNSOL_ON_SS: ret =  responseSsData(p); break;
             case RIL_UNSOL_STK_CC_ALPHA_NOTIFY: ret =  responseString(p); break;
             case RIL_UNSOL_LCEDATA_RECV: ret = responseLceData(p); break;
+            case RIL_UNSOL_DEVICE_READY_NOTI: ret =  responseVoid(p); break;
+            case RIL_UNSOL_AM: ret = responseString(p); break;
+            case RIL_UNSOL_RESPONSE_HANDOVER: ret =  responseVoid(p); break;
 
             default:
                 throw new RuntimeException("Unrecognized unsol response: " + response);
@@ -3511,20 +3541,52 @@ public final class RIL extends BaseCommands implements CommandsInterface {
             dc = new DriverCall();
 
             dc.state = DriverCall.stateFromCLCC(p.readInt());
-            dc.index = p.readInt();
+            riljLogv("dc.state=" + dc.state);
+
+            // & 0xff to truncate to 1 byte added for us, not in RIL.java
+            dc.index = p.readInt() & 0xff;
+            riljLogv("dc.index=" + dc.index);
+
             dc.TOA = p.readInt();
+            riljLogv("dc.TOA=" + dc.TOA);
+
             dc.isMpty = (0 != p.readInt());
+            riljLogv("dc.isMpty=" + dc.isMpty);
+
             dc.isMT = (0 != p.readInt());
+            riljLogv("dc.isMT=" + dc.isMT);
+
             dc.als = p.readInt();
+            riljLogv("dc.als=" + dc.als);
             voiceSettings = p.readInt();
+
+            riljLogv("dc.isVoice=" + voiceSettings);
             dc.isVoice = (0 == voiceSettings) ? false : true;
+            
+            //boolean isVideo = (0 != p.readInt());
+            //riljLogv("isVideo=" + isVideo);
+
+            int call_type = p.readInt();            // Samsung CallDetails
+            riljLogv("call_type=" + call_type);
+            int call_domain = p.readInt();          // Samsung CallDetails
+            riljLogv("call_domain=" + call_domain);
+            String csv = p.readString();            // Samsung CallDetails
+            riljLogv("csv=" + csv);
+
             dc.isVoicePrivacy = (0 != p.readInt());
+            riljLogv("dc.isVoicePrivacy=" + dc.isVoicePrivacy);
+
             dc.number = p.readString();
+            riljLogv("dc.number=" + dc.number);
+
             int np = p.readInt();
+            riljLogv("np=" +np);
             dc.numberPresentation = DriverCall.presentationFromCLIP(np);
+
             dc.name = p.readString();
             // according to ril.h, namePresentation should be handled as numberPresentation;
             dc.namePresentation = DriverCall.presentationFromCLIP(p.readInt());
+
             int uusInfoPresent = p.readInt();
             if (uusInfoPresent == 1) {
                 dc.uusInfo = new UUSInfo();
@@ -3693,21 +3755,26 @@ public final class RIL extends BaseCommands implements CommandsInterface {
         String strings[] = (String [])responseStrings(p);
         ArrayList<OperatorInfo> ret;
 
-        if (strings.length % 4 != 0) {
-            throw new RuntimeException(
-                "RIL_REQUEST_QUERY_AVAILABLE_NETWORKS: invalid response. Got "
-                + strings.length + " strings, expected multible of 4");
+        for (int i = 0 ; i < strings.length ; i ++) {
+            riljLog("responseOperatorInfos: i=" + i + " s=" + strings[i]);
         }
 
-        ret = new ArrayList<OperatorInfo>(strings.length / 4);
+        if (strings.length % 6 != 0) {
+            throw new RuntimeException(
+                "RIL_REQUEST_QUERY_AVAILABLE_NETWORKS: invalid response. Got "
+                + strings.length + " strings, expected multible of 6");
+        }
 
-        for (int i = 0 ; i < strings.length ; i += 4) {
+        ret = new ArrayList<OperatorInfo>(strings.length / 6);
+
+        for (int i = 0 ; i < strings.length ; i += 6) {
+            
             ret.add (
                 new OperatorInfo(
-                    strings[i+0],
-                    strings[i+1],
-                    strings[i+2],
-                    strings[i+3]));
+                    strings[i+0], //operatorAlphaLong
+                    strings[i+1], //operatorAlphaShort
+                    strings[i+2], //operatorNumeric
+                    strings[i+3])); //state
         }
 
         return ret;
@@ -4252,6 +4319,9 @@ public final class RIL extends BaseCommands implements CommandsInterface {
             case RIL_UNSOL_ON_SS: return "UNSOL_ON_SS";
             case RIL_UNSOL_STK_CC_ALPHA_NOTIFY: return "UNSOL_STK_CC_ALPHA_NOTIFY";
             case RIL_UNSOL_LCEDATA_RECV: return "UNSOL_LCE_INFO_RECV";
+            case RIL_UNSOL_DEVICE_READY_NOTI: return "RIL_UNSOL_DEVICE_READY_NOTI";
+            case RIL_UNSOL_AM: return "RIL_UNSOL_AM";
+            case RIL_UNSOL_RESPONSE_HANDOVER : return "RIL_UNSOL_RESPONSE_HANDOVER";
             default: return "<unknown response>";
         }
     }
