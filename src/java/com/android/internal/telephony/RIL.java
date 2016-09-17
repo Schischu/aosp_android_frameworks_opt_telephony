@@ -851,23 +851,22 @@ public final class RIL extends BaseCommands implements CommandsInterface {
 
     // FIXME This API should take an AID and slot ID
     public void setDataAllowed(boolean allowed, Message result) {
-        Rlog.v(RILJ_LOG_TAG, "XMM7260RIL: setDataAllowed");
-
+//+++
         if (result != null) {
             AsyncResult.forMessage(result, 0, null);
             result.sendToTarget();
         }
-        /*
-        RILRequest rr = RILRequest.obtain(RIL_REQUEST_ALLOW_DATA, result);
-        if (RILJ_LOGD) {
-            riljLog(rr.serialString() + "> " + requestToString(rr.mRequest) +
-                    " allowed: " + allowed);
-        }
-
-        rr.mParcel.writeInt(1);
-        rr.mParcel.writeInt(allowed ? 1 : 0);
-        send(rr);
-        */
+//===
+//        RILRequest rr = RILRequest.obtain(RIL_REQUEST_ALLOW_DATA, result);
+//        if (RILJ_LOGD) {
+//            riljLog(rr.serialString() + "> " + requestToString(rr.mRequest) +
+//                    " allowed: " + allowed);
+//        }
+//
+//        rr.mParcel.writeInt(1);
+//        rr.mParcel.writeInt(allowed ? 1 : 0);
+//        send(rr);
+//---
     }
 
     @Override public void
@@ -1057,19 +1056,23 @@ public final class RIL extends BaseCommands implements CommandsInterface {
     @Override
     public void
     dial(String address, int clirMode, UUSInfo uusInfo, Message result) {
+//+++
         if (PhoneNumberUtils.isEmergencyNumber(address)) {
             dialEmergencyCall(address, clirMode, result);
             return;
         }
+//===
 
         RILRequest rr = RILRequest.obtain(RIL_REQUEST_DIAL, result);
 
         rr.mParcel.writeString(address);
         rr.mParcel.writeInt(clirMode);
 
+//+++
         rr.mParcel.writeInt(0);         // CallDetails.call_type
         rr.mParcel.writeInt(1);         // CallDetails.call_domain
         rr.mParcel.writeString("");     // CallDetails.getCsvFromExtras
+//===
 
         if (uusInfo == null) {
             rr.mParcel.writeInt(0); // UUS information is absent
@@ -1087,6 +1090,7 @@ public final class RIL extends BaseCommands implements CommandsInterface {
         send(rr);
     }
 
+//+++
     private void
     dialEmergencyCall(String address, int clirMode, Message result) {
         RILRequest rr = RILRequest.obtain(RIL_REQUEST_DIAL_EMERGENCY, result);
@@ -1101,6 +1105,7 @@ public final class RIL extends BaseCommands implements CommandsInterface {
 
         send(rr);
     }
+//===
 
     @Override
     public void
@@ -1254,8 +1259,10 @@ public final class RIL extends BaseCommands implements CommandsInterface {
 
         if (RILJ_LOGD) riljLog(rr.serialString() + "> " + requestToString(rr.mRequest));
 
+//+++
         rr.mParcel.writeInt(1);
         rr.mParcel.writeInt(0);
+//===
 
         mEventLog.writeRilAnswer(rr.mSerial);
 
@@ -2473,10 +2480,12 @@ public final class RIL extends BaseCommands implements CommandsInterface {
     private void switchToRadioState(RadioState newState) {
         setRadioState(newState);
 
+//+++
         if (newState == RadioState.RADIO_ON && mPendingGetSimStatus != null) {
             getIccCardStatus(mPendingGetSimStatus);
             mPendingGetSimStatus = null;
         }
+//===
     }
 
     /**
@@ -3144,11 +3153,13 @@ private static final char[] HEX_CHARS = { '0', '1', '2', '3', '4', '5', '6', '7'
             case RIL_UNSOL_STK_CC_ALPHA_NOTIFY: ret =  responseString(p); break;
             case RIL_UNSOL_LCEDATA_RECV: ret = responseLceData(p); break;
 
+//+++
             case RIL_UNSOL_DEVICE_READY_NOTI: ret =  responseVoid(p); break;
             case RIL_UNSOL_AM: ret = responseAm(p); break;
             case RIL_UNSOL_RESPONSE_HANDOVER: ret =  responseVoid(p); break;
             case RIL_UNSOL_WB_AMR_STATE: ret =  responseInts(p); break;
             case RIL_UNSOL_SNDMGR_WB_AMR_REPORT: ret =  responseVoid(p); break;
+//===
 
             default:
                 throw new RuntimeException("Unrecognized unsol response: " + response);
@@ -3785,11 +3796,13 @@ private static final char[] HEX_CHARS = { '0', '1', '2', '3', '4', '5', '6', '7'
             appStatus.pin1_replaced  = p.readInt();
             appStatus.pin1           = appStatus.PinStateFromRILInt(p.readInt());
             appStatus.pin2           = appStatus.PinStateFromRILInt(p.readInt());
+//+++
             p.readInt(); // remaining_count_pin1 - pin1_num_retries
             p.readInt(); // remaining_count_puk1 - puk1_num_retries
             p.readInt(); // remaining_count_pin2 - pin2_num_retries
             p.readInt(); // remaining_count_puk2 - puk2_num_retries
             p.readInt(); // - perso_unblock_retries
+//===
             cardStatus.mApplications[i] = appStatus;
         }
         return cardStatus;
@@ -3823,53 +3836,12 @@ private static final char[] HEX_CHARS = { '0', '1', '2', '3', '4', '5', '6', '7'
         for (int i = 0 ; i < num ; i++) {
             dc = new DriverCall();
 
-/*
-000000008206000000000000
-01000000
-02000000
-01010000
-91000000
-00000000
-00000000
-00000000
-01000000
-
-00000000
-00000000
-00000000
-00000000
-00000000
-00000000
-
-0B000000 2B003400390039003100320039003300390037003900000000000000FFFFFFFF0000000000000000
-
-
-
-00000000EF06000000000000
-01000000 #num
-03000000 #state ALERTING
-01010000 #index 1
-91000000 #TOA
-00000000 #isMpty
-00000000 #isMT
-00000000 #als
-01000000 #voiceSettings
-
-00000000
-00000000
-00000000
-00000000
-00000000
-00000000
-
-0B000000 2B003400390039003100320039003300390037003900 0000 number
-00000000 numberPresentation
-FFFFFFFF name
-00000000 namePresentation
-00000000 uusInfoPresent
-*/
             dc.state = DriverCall.stateFromCLCC(p.readInt());
+//+++
             dc.index = p.readInt() & 0xff;
+//===
+//            dc.index = p.readInt();
+//---
             dc.TOA = p.readInt();
             dc.isMpty = (0 != p.readInt());
             dc.isMT = (0 != p.readInt());
@@ -3877,24 +3849,22 @@ FFFFFFFF name
             voiceSettings = p.readInt();
             dc.isVoice = (0 == voiceSettings) ? false : true;
 
+//+++
             int call_type = p.readInt();            // Samsung CallDetails
             int call_domain = p.readInt();          // Samsung CallDetails
             //String csv = p.readString();            // Samsung CallDetails
             p.readInt();
             p.readInt();
             p.readInt();
-            
+//===
+
             dc.isVoicePrivacy = (0 != p.readInt());
-
             dc.number = p.readString();
-
             int np = p.readInt();
             dc.numberPresentation = DriverCall.presentationFromCLIP(np);
-
             dc.name = p.readString();
             // according to ril.h, namePresentation should be handled as numberPresentation;
             dc.namePresentation = DriverCall.presentationFromCLIP(p.readInt());
-
             int uusInfoPresent = p.readInt();
             if (uusInfoPresent == 1) {
                 dc.uusInfo = new UUSInfo();
@@ -4062,104 +4032,7 @@ FFFFFFFF name
 
     private Object
     responseOperatorInfos(Parcel p) {
-
-/*
-000000006701000000000000
-10000000
-
-08000000
-54002D004D006F00620069006C006500 00000000 #T-Mobile
-08000000
-54002D004D006F00620069006C006500 00000000 #T-Mobile
-05000000
-32003600320030003100 0000 #26201
-09000000
-61007600610069006C00610062006C006500 0000 #available
-05000000
-32003200350031003100 0000 #22511
-
-07000000
-6F00320020002D00200064006500 0000 #o2 - de
-07000000
-6F00320020002D00200064006500 0000 #o2 - de
-05000000
-32003600320030003700 0000 #26207
-07000000
-55004E004B004E004F0057004E00 0000 #UNKNOWN
-05000000
-35003000380034003000 0000 #50840
-
-06000000
-45002D0050006C0075007300 00000000 #E-Plus
-06000000
-45002D0050006C0075007300 00000000 #E-Plus
-09000000
-66006F007200620069006400640065006E00 0000 #forbidden
-07000000
-55004E004B004E004F0057004E000000 #UNKNOWN
-04000000
-390032003100370000000000 #9217
-
-0B000000
-56006F006400610066006F006E0065002E00640065000000 #Vodafone.de
-05000000
-320036003200300032000000 #26202
-09000000
-66006F007200620069006400640065006E000000 #forbidden
-07000000
-55004E004B004E004F0057004E000000 #UNKNOWN
-03000000
-3800310030000000 #810
-
-11-05 21:48:24.193  7251  7313 D RILJ    : [0]: T-Mobile [SUB0]
-11-05 21:48:24.193  7251  7313 D RILJ    : [1]: T-Mobile [SUB0]
-11-05 21:48:24.193  7251  7313 D RILJ    : [2]: 26201 [SUB0]
-11-05 21:48:24.193  7251  7313 D RILJ    : [3]: available [SUB0]
-
-11-05 21:48:24.193  7251  7313 D RILJ    : [4]: 22511 [SUB0]
-
-11-05 21:48:24.193  7251  7313 D RILJ    : [5]: o2 - de [SUB0]
-11-05 21:48:24.194  7251  7313 D RILJ    : [6]: o2 - de [SUB0]
-11-05 21:48:24.194  7251  7313 D RILJ    : [7]: 26207 [SUB0]
-11-05 21:48:24.194  7251  7313 D RILJ    : [8]: UNKNOWN [SUB0]
-
-11-05 21:48:24.194  7251  7313 D RILJ    : [9]: 50840 [SUB0]
-
-11-05 21:48:24.194  7251  7313 D RILJ    : [10]: E-Plus [SUB0]
-11-05 21:48:24.194  7251  7313 D RILJ    : [11]: E-Plus [SUB0]
-11-05 21:48:24.194  7251  7313 D RILJ    : [12]: forbidden [SUB0]
-11-05 21:48:24.194  7251  7313 D RILJ    : [13]: UNKNOWN [SUB0]
-11-05 21:48:24.195  7251  7313 D RILJ    : [14]: 9217 [SUB0]
-
-11-05 21:48:24.195  7251  7313 D RILJ    : [15]: Vodafone.de [SUB0]
-
-000000000F03000000000000
-10000000
-08000000 54002D004D006F00620069006C00650000000000 T-Mobile
-08000000 54002D004D006F00620069006C00650000000000 T-Mobile
-05000000 320036003200300031000000 26201
-09000000 61007600610069006C00610062006C0065000000 available
-05000000 320032003500310031000000 22511
-
-0B000000 56006F006400610066006F006E0065002E00640065000000 Vodafone.de
-0B000000 56006F006400610066006F006E0065002E00640065000000 Vodafone.de
-05000000 320036003200300032000000 26202
-07000000 55004E004B004E004F0057004E000000 UNKNOWN
-03000000 3800310030000000 810
-
-06000000 45002D0050006C007500730000000000 E-Plus
-06000000 45002D0050006C007500730000000000 E-Plus
-09000000 66006F007200620069006400640065006E000000 forbidden
-07000000 55004E004B004E004F0057004E000000  UNKNOWN
-01000000 30000000 "0"
-
-07000000 6F00320020002D002000640065000000 o2 - de
-05000000 320036003200300037000000 26207
-09000000 66006F007200620069006400640065006E000000 forbidden
-07000000 55004E004B004E004F0057004E000000 UNKNOWN
-01000000 30000000 "0"
-*/
-
+//+++
         ArrayList<OperatorInfo> ret;
         Integer count = p.readInt() / 4;
         
@@ -4186,32 +4059,27 @@ FFFFFFFF name
                     operatorNumeric,
                     state));
         }
-
-
-        /*
-        String strings[] = (String [])responseStrings(p);
-        ArrayList<OperatorInfo> ret;
-
-        for (int i = 0 ; i < strings.length ; i++) {
-          if (RILJ_LOGD) riljLog("[" + i + "]: " + strings[i]);
-        }
-        if (strings.length % 8 != 0) {
-            throw new RuntimeException(
-                "RIL_REQUEST_QUERY_AVAILABLE_NETWORKS: invalid response. Got "
-                + strings.length + " strings, expected multible of 8");
-        }
-
-        ret = new ArrayList<OperatorInfo>(strings.length / 5);
-
-        for (int i = 0 ; i < strings.length ; i += 5) {
-            ret.add (
-                new OperatorInfo(
-                    strings[i+0], //operatorAlphaLong
-                    strings[i+1], //operatorAlphaShort
-                    strings[i+2], //operatorNumeric
-                    strings[i+3])); //state
-        }
-        */
+//===
+//        String strings[] = (String [])responseStrings(p);
+//        ArrayList<OperatorInfo> ret;
+//
+//        if (strings.length % 4 != 0) {
+//            throw new RuntimeException(
+//                "RIL_REQUEST_QUERY_AVAILABLE_NETWORKS: invalid response. Got "
+//                + strings.length + " strings, expected multible of 4");
+//        }
+//
+//        ret = new ArrayList<OperatorInfo>(strings.length / 4);
+//
+//        for (int i = 0 ; i < strings.length ; i += 4) {
+//            ret.add (
+//                new OperatorInfo(
+//                    strings[i+0],
+//                    strings[i+1],
+//                    strings[i+2],
+//                    strings[i+3]));
+//        }
+//---
 
         return ret;
     }
@@ -4322,8 +4190,6 @@ FFFFFFFF name
         // Assume this is gsm, but doesn't matter as ServiceStateTracker
         // sets the proper value.
         SignalStrength signalStrength = SignalStrength.makeSignalStrengthFromRilParcel(p);
-
-        
         return signalStrength;
     }
 
@@ -4761,10 +4627,12 @@ FFFFFFFF name
             case RIL_UNSOL_STK_CC_ALPHA_NOTIFY: return "UNSOL_STK_CC_ALPHA_NOTIFY";
             case RIL_UNSOL_LCEDATA_RECV: return "UNSOL_LCE_INFO_RECV";
 
+//+++
             case RIL_UNSOL_DEVICE_READY_NOTI: return "RIL_UNSOL_DEVICE_READY_NOTI";
             case RIL_UNSOL_AM: return "RIL_UNSOL_AM";
             case RIL_UNSOL_RESPONSE_HANDOVER : return "RIL_UNSOL_RESPONSE_HANDOVER";
             case RIL_UNSOL_SNDMGR_WB_AMR_REPORT : return "RIL_UNSOL_SNDMGR_WB_AMR_REPORT";
+//===
             default: return "<unknown response>";
         }
     }
@@ -4834,6 +4702,7 @@ FFFFFFFF name
         return ssData;
     }
 
+//+++
     private Object
     responseAm(Parcel p) {
         Rlog.d(RILJ_LOG_TAG, "responseAm");
@@ -4851,7 +4720,7 @@ FFFFFFFF name
 
         return ret;
     }
-
+//===
 
     // ***** Methods for CDMA support
     @Override
@@ -5082,6 +4951,7 @@ FFFFFFFF name
      */
     @Override
     public void getCellInfoList(Message result) {
+//+++
         Rlog.v(RILJ_LOG_TAG, "XMM7260RIL: getCellInfoList");
 
         if (result != null) {
@@ -5089,13 +4959,13 @@ FFFFFFFF name
             AsyncResult.forMessage(result, null, e);
             result.sendToTarget();
         }
-        /*
-        RILRequest rr = RILRequest.obtain(RIL_REQUEST_GET_CELL_INFO_LIST, result);
-
-        if (RILJ_LOGD) riljLog(rr.serialString() + "> " + requestToString(rr.mRequest));
-
-        send(rr);
-        */
+//===
+//        RILRequest rr = RILRequest.obtain(RIL_REQUEST_GET_CELL_INFO_LIST, result);
+//
+//        if (RILJ_LOGD) riljLog(rr.serialString() + "> " + requestToString(rr.mRequest));
+//
+//        send(rr);
+//---
     }
 
     /**
@@ -5110,17 +4980,17 @@ FFFFFFFF name
             AsyncResult.forMessage(response, null, e);
             response.sendToTarget();
         }
-        /*
-        if (RILJ_LOGD) riljLog("setCellInfoListRate: " + rateInMillis);
-        RILRequest rr = RILRequest.obtain(RIL_REQUEST_SET_UNSOL_CELL_INFO_LIST_RATE, response);
-
-        rr.mParcel.writeInt(1);
-        rr.mParcel.writeInt(rateInMillis);
-
-        if (RILJ_LOGD) riljLog(rr.serialString() + "> " + requestToString(rr.mRequest));
-
-        send(rr);
-        */
+//===
+//        if (RILJ_LOGD) riljLog("setCellInfoListRate: " + rateInMillis);
+//        RILRequest rr = RILRequest.obtain(RIL_REQUEST_SET_UNSOL_CELL_INFO_LIST_RATE, response);
+//
+//        rr.mParcel.writeInt(1);
+//        rr.mParcel.writeInt(rateInMillis);
+//
+//        if (RILJ_LOGD) riljLog(rr.serialString() + "> " + requestToString(rr.mRequest));
+//
+//        send(rr);
+//---
     }
 
     public void setInitialAttachApn(String apn, String protocol, int authType, String username,
@@ -5197,6 +5067,7 @@ FFFFFFFF name
      */
     @Override
     public void iccOpenLogicalChannel(String AID, Message response) {
+//+++
         if(mRilVersion < 10) {
             if (response != null) {
                 CommandException ex = new CommandException(
@@ -5206,6 +5077,7 @@ FFFFFFFF name
             }
             return;
         }
+//===
 
         RILRequest rr = RILRequest.obtain(RIL_REQUEST_SIM_OPEN_CHANNEL, response);
         rr.mParcel.writeString(AID);
@@ -5237,7 +5109,7 @@ FFFFFFFF name
     @Override
     public void iccTransmitApduLogicalChannel(int channel, int cla, int instruction,
             int p1, int p2, int p3, String data, Message response) {
-
+//+++
         if(mRilVersion < 10) {
             if (response != null) {
                 CommandException ex = new CommandException(
@@ -5247,6 +5119,7 @@ FFFFFFFF name
             }
             return;
         }
+//===
 
         if (channel <= 0) {
             throw new RuntimeException(
@@ -5272,7 +5145,7 @@ FFFFFFFF name
      */
     private void iccTransmitApduHelper(int rilCommand, int channel, int cla,
             int instruction, int p1, int p2, int p3, String data, Message response) {
-
+//+++
         if(mRilVersion < 10) {
             if (response != null) {
                 CommandException ex = new CommandException(
@@ -5282,6 +5155,7 @@ FFFFFFFF name
             }
             return;
         }
+//===
 
         RILRequest rr = RILRequest.obtain(rilCommand, response);
         rr.mParcel.writeInt(channel);
