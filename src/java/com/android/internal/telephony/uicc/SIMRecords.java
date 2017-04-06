@@ -20,15 +20,15 @@ import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
+import android.content.res.Resources;
 import android.os.AsyncResult;
 import android.os.Message;
 import android.telephony.CarrierConfigManager;
 import android.telephony.PhoneNumberUtils;
+import android.telephony.Rlog;
 import android.telephony.SmsMessage;
 import android.telephony.SubscriptionInfo;
 import android.text.TextUtils;
-import android.telephony.Rlog;
-import android.content.res.Resources;
 
 import com.android.internal.telephony.CommandsInterface;
 import com.android.internal.telephony.MccTable;
@@ -50,6 +50,8 @@ public class SIMRecords extends IccRecords {
     protected static final String LOG_TAG = "SIMRecords";
 
     private static final boolean CRASH_RIL = false;
+
+    private static final boolean VDBG = false;
 
     // ***** Instance Variables
 
@@ -138,36 +140,47 @@ public class SIMRecords extends IccRecords {
     private static final int CFIS_ADN_EXTENSION_ID_OFFSET = 15;
 
     // ***** Event Constants
-    private static final int EVENT_GET_IMSI_DONE = 3;
-    private static final int EVENT_GET_ICCID_DONE = 4;
-    private static final int EVENT_GET_MBI_DONE = 5;
-    private static final int EVENT_GET_MBDN_DONE = 6;
-    private static final int EVENT_GET_MWIS_DONE = 7;
-    private static final int EVENT_GET_VOICE_MAIL_INDICATOR_CPHS_DONE = 8;
-    protected static final int EVENT_GET_AD_DONE = 9; // Admin data on SIM
-    protected static final int EVENT_GET_MSISDN_DONE = 10;
-    private static final int EVENT_GET_CPHS_MAILBOX_DONE = 11;
-    private static final int EVENT_GET_SPN_DONE = 12;
-    private static final int EVENT_GET_SPDI_DONE = 13;
-    private static final int EVENT_UPDATE_DONE = 14;
-    private static final int EVENT_GET_PNN_DONE = 15;
-    protected static final int EVENT_GET_SST_DONE = 17;
-    private static final int EVENT_GET_ALL_SMS_DONE = 18;
-    private static final int EVENT_MARK_SMS_READ_DONE = 19;
-    private static final int EVENT_SET_MBDN_DONE = 20;
-    private static final int EVENT_SMS_ON_SIM = 21;
-    private static final int EVENT_GET_SMS_DONE = 22;
-    private static final int EVENT_GET_CFF_DONE = 24;
-    private static final int EVENT_SET_CPHS_MAILBOX_DONE = 25;
-    private static final int EVENT_GET_INFO_CPHS_DONE = 26;
-    // private static final int EVENT_SET_MSISDN_DONE = 30; Defined in IccRecords as 30
-    private static final int EVENT_SIM_REFRESH = 31;
-    private static final int EVENT_GET_CFIS_DONE = 32;
-    private static final int EVENT_GET_CSP_CPHS_DONE = 33;
-    private static final int EVENT_GET_GID1_DONE = 34;
-    private static final int EVENT_APP_LOCKED = 35;
-    private static final int EVENT_GET_GID2_DONE = 36;
-    private static final int EVENT_CARRIER_CONFIG_CHANGED = 37;
+    private static final int SIM_RECORD_EVENT_BASE = 0x00;
+    private static final int EVENT_GET_IMSI_DONE = 3 + SIM_RECORD_EVENT_BASE;
+    private static final int EVENT_GET_ICCID_DONE = 4 + SIM_RECORD_EVENT_BASE;
+    private static final int EVENT_GET_MBI_DONE = 5 + SIM_RECORD_EVENT_BASE;
+    private static final int EVENT_GET_MBDN_DONE = 6 + SIM_RECORD_EVENT_BASE;
+    private static final int EVENT_GET_MWIS_DONE = 7 + SIM_RECORD_EVENT_BASE;
+    private static final int EVENT_GET_VOICE_MAIL_INDICATOR_CPHS_DONE = 8 + SIM_RECORD_EVENT_BASE;
+    private static final int EVENT_GET_AD_DONE = 9 + SIM_RECORD_EVENT_BASE; // Admin data on SIM
+    private static final int EVENT_GET_MSISDN_DONE = 10 + SIM_RECORD_EVENT_BASE;
+    private static final int EVENT_GET_CPHS_MAILBOX_DONE = 11 + SIM_RECORD_EVENT_BASE;
+    private static final int EVENT_GET_SPN_DONE = 12 + SIM_RECORD_EVENT_BASE;
+    private static final int EVENT_GET_SPDI_DONE = 13 + SIM_RECORD_EVENT_BASE;
+    private static final int EVENT_UPDATE_DONE = 14 + SIM_RECORD_EVENT_BASE;
+    private static final int EVENT_GET_PNN_DONE = 15 + SIM_RECORD_EVENT_BASE;
+    private static final int EVENT_GET_SST_DONE = 17 + SIM_RECORD_EVENT_BASE;
+    private static final int EVENT_GET_ALL_SMS_DONE = 18 + SIM_RECORD_EVENT_BASE;
+    private static final int EVENT_MARK_SMS_READ_DONE = 19 + SIM_RECORD_EVENT_BASE;
+    private static final int EVENT_SET_MBDN_DONE = 20 + SIM_RECORD_EVENT_BASE;
+    private static final int EVENT_SMS_ON_SIM = 21 + SIM_RECORD_EVENT_BASE;
+    private static final int EVENT_GET_SMS_DONE = 22 + SIM_RECORD_EVENT_BASE;
+    private static final int EVENT_GET_CFF_DONE = 24 + SIM_RECORD_EVENT_BASE;
+    private static final int EVENT_SET_CPHS_MAILBOX_DONE = 25 + SIM_RECORD_EVENT_BASE;
+    private static final int EVENT_GET_INFO_CPHS_DONE = 26 + SIM_RECORD_EVENT_BASE;
+    private static final int EVENT_SET_MSISDN_DONE = 30 + SIM_RECORD_EVENT_BASE;
+    private static final int EVENT_GET_CFIS_DONE = 32 + SIM_RECORD_EVENT_BASE;
+    private static final int EVENT_GET_CSP_CPHS_DONE = 33 + SIM_RECORD_EVENT_BASE;
+    private static final int EVENT_GET_GID1_DONE = 34 + SIM_RECORD_EVENT_BASE;
+    private static final int EVENT_GET_GID2_DONE = 36 + SIM_RECORD_EVENT_BASE;
+    private static final int EVENT_GET_PLMN_W_ACT_DONE = 37 + SIM_RECORD_EVENT_BASE;
+    private static final int EVENT_GET_OPLMN_W_ACT_DONE = 38 + SIM_RECORD_EVENT_BASE;
+    private static final int EVENT_GET_HPLMN_W_ACT_DONE = 39 + SIM_RECORD_EVENT_BASE;
+    private static final int EVENT_GET_EHPLMN_DONE = 40 + SIM_RECORD_EVENT_BASE;
+    private static final int EVENT_GET_FPLMN_DONE = 41 + SIM_RECORD_EVENT_BASE;
+
+    // TODO: Possibly move these to IccRecords.java
+    private static final int SYSTEM_EVENT_BASE = 0x100;
+    private static final int EVENT_CARRIER_CONFIG_CHANGED = 1 + SYSTEM_EVENT_BASE;
+    private static final int EVENT_APP_LOCKED = 2 + SYSTEM_EVENT_BASE;
+    private static final int EVENT_SIM_REFRESH = 3 + SYSTEM_EVENT_BASE;
+
+
 
     // Lookup table for carriers known to produce SIMs which incorrectly indicate MNC length.
 
@@ -262,6 +275,11 @@ public class SIMRecords extends IccRecords {
         mPnnHomeName = null;
         mGid1 = null;
         mGid2 = null;
+        mPlmnActRecords = null;
+        mOplmnActRecords = null;
+        mHplmnActRecords = null;
+        mFplmns = null;
+        mEhplmns = null;
 
         mAdnCache.reset();
 
@@ -349,7 +367,8 @@ public class SIMRecords extends IccRecords {
         mNewMsisdn = number;
         mNewMsisdnTag = alphaTag;
 
-        if(DBG) log("Set MSISDN: " + mNewMsisdnTag + " " + /*mNewMsisdn*/ "xxxxxxx");
+        if(DBG) log("Set MSISDN: " + mNewMsisdnTag + " " + /*mNewMsisdn*/
+                Rlog.pii(LOG_TAG, mNewMsisdn));
 
         AdnRecord adn = new AdnRecord(mNewMsisdnTag, mNewMsisdn);
 
@@ -541,7 +560,7 @@ public class SIMRecords extends IccRecords {
 
         try {
             if (validEfCfis(mEfCfis)) {
-                // lsb is of byte 1 is voice status
+                // lsb is of byte f1 is voice status
                 if (enable) {
                     mEfCfis[1] |= 1;
                 } else {
@@ -554,7 +573,7 @@ public class SIMRecords extends IccRecords {
                 // Update dialNumber if not empty and CFU is enabled.
                 // Spec reference for EF_CFIS contents, TS 51.011 section 10.3.46.
                 if (enable && !TextUtils.isEmpty(dialNumber)) {
-                    log("EF_CFIS: updating cf number, " + dialNumber);
+                    logv("EF_CFIS: updating cf number, " + Rlog.pii(LOG_TAG, dialNumber));
                     byte[] bcdNumber = PhoneNumberUtils.numberToCalledPartyBCD(dialNumber);
 
                     System.arraycopy(bcdNumber, 0, mEfCfis, CFIS_TON_NPI_OFFSET, bcdNumber.length);
@@ -672,7 +691,7 @@ public class SIMRecords extends IccRecords {
                 }
 
                 log("IMSI: mMncLength=" + mMncLength);
-                log("IMSI: " + mImsi.substring(0, 6) + "xxxxxxx");
+                log("IMSI: " + mImsi.substring(0, 6) + Rlog.pii(LOG_TAG, mImsi.substring(6)));
 
                 if (((mMncLength == UNKNOWN) || (mMncLength == 2)) &&
                         ((mImsi != null) && (mImsi.length() >= 6))) {
@@ -815,7 +834,7 @@ public class SIMRecords extends IccRecords {
                 mMsisdn = adn.getNumber();
                 mMsisdnTag = adn.getAlphaTag();
 
-                log("MSISDN: " + /*mMsisdn*/ "xxxxxxx");
+                log("MSISDN: " + /*mMsisdn*/ Rlog.pii(LOG_TAG, mMsisdn));
             break;
 
             case EVENT_SET_MSISDN_DONE:
@@ -1239,6 +1258,72 @@ public class SIMRecords extends IccRecords {
 
                 break;
 
+            case EVENT_GET_PLMN_W_ACT_DONE:
+                ar = (AsyncResult) msg.obj;
+                data = (byte[]) ar.result;
+
+                if (ar.exception != null || data == null) {
+                    loge("Failed getting User PLMN with Access Tech Records: " + ar.exception);
+                    break;
+                } else {
+                    log("Received a PlmnActRecord, raw=" + IccUtils.bytesToHexString(data));
+                    mPlmnActRecords = PlmnActRecord.getRecords(data);
+                    if (VDBG) log("PlmnActRecords=" + Arrays.toString(mPlmnActRecords));
+                }
+                break;
+
+            case EVENT_GET_OPLMN_W_ACT_DONE:
+                ar = (AsyncResult) msg.obj;
+                data = (byte[]) ar.result;
+
+                if (ar.exception != null || data == null) {
+                    loge("Failed getting Operator PLMN with Access Tech Records: "
+                            + ar.exception);
+                    break;
+                } else {
+                    log("Received a PlmnActRecord, raw=" + IccUtils.bytesToHexString(data));
+                    mOplmnActRecords = PlmnActRecord.getRecords(data);
+                    if (VDBG) log("OplmnActRecord[]=" + Arrays.toString(mOplmnActRecords));
+                }
+                break;
+
+            case EVENT_GET_HPLMN_W_ACT_DONE:
+                ar = (AsyncResult) msg.obj;
+                data = (byte[]) ar.result;
+
+                if (ar.exception != null || data == null) {
+                    loge("Failed getting Home PLMN with Access Tech Records: " + ar.exception);
+                    break;
+                } else {
+                    log("Received a PlmnActRecord, raw=" + IccUtils.bytesToHexString(data));
+                    mHplmnActRecords = PlmnActRecord.getRecords(data);
+                    log("HplmnActRecord[]=" + Arrays.toString(mHplmnActRecords));
+                }
+                break;
+
+            case EVENT_GET_EHPLMN_DONE:
+                ar = (AsyncResult) msg.obj;
+                data = (byte[]) ar.result;
+                if (ar.exception != null || data == null) {
+                    loge("Failed getting Equivalent Home PLMNs: " + ar.exception);
+                    break;
+                } else {
+                    mEhplmns = parseBcdPlmnList(data, "Equivalent Home");
+                }
+                break;
+
+            case EVENT_GET_FPLMN_DONE:
+                isRecordLoadResponse = true;
+                ar = (AsyncResult) msg.obj;
+                data = (byte[]) ar.result;
+                if (ar.exception != null || data == null) {
+                    loge("Failed getting Forbidden PLMNs: " + ar.exception);
+                    break;
+                } else {
+                    mFplmns = parseBcdPlmnList(data, "Forbidden");
+                }
+                break;
+
             case EVENT_CARRIER_CONFIG_CHANGED:
                 handleCarrierNameOverride();
                 break;
@@ -1300,6 +1385,7 @@ public class SIMRecords extends IccRecords {
             case EF_FDN:
                 if (DBG) log("SIM Refresh called for EF_FDN");
                 mParentApp.queryFdn();
+                mAdnCache.reset();
                 break;
             case EF_MSISDN:
                 mRecordsToLoad++;
@@ -1632,6 +1718,17 @@ public class SIMRecords extends IccRecords {
         mFh.loadEFTransparent(EF_GID2, obtainMessage(EVENT_GET_GID2_DONE));
         mRecordsToLoad++;
 
+        mFh.loadEFTransparent(EF_PLMN_W_ACT, obtainMessage(EVENT_GET_PLMN_W_ACT_DONE));
+
+        mFh.loadEFTransparent(EF_OPLMN_W_ACT, obtainMessage(EVENT_GET_OPLMN_W_ACT_DONE));
+
+        mFh.loadEFTransparent(EF_HPLMN_W_ACT, obtainMessage(EVENT_GET_HPLMN_W_ACT_DONE));
+
+        mFh.loadEFTransparent(EF_EHPLMN, obtainMessage(EVENT_GET_EHPLMN_DONE));
+
+        mFh.loadEFTransparent(EF_FPLMN, obtainMessage(EVENT_GET_FPLMN_DONE));
+        mRecordsToLoad++;
+
         loadEfLiAndEfPl();
 
         // XXX should seek instead of examining them all
@@ -1908,6 +2005,25 @@ public class SIMRecords extends IccRecords {
     }
 
     /**
+     * convert a byte array of packed plmns to an array of strings
+     */
+    private String[] parseBcdPlmnList(byte[] data, String description) {
+        final int packedBcdPlmnLenBytes = 3;
+        log("Received " + description + " PLMNs, raw=" + IccUtils.bytesToHexString(data));
+        if (data.length == 0 || (data.length % packedBcdPlmnLenBytes) != 0) {
+            loge("Received invalid " + description + " PLMN list");
+            return null;
+        }
+        int numPlmns = data.length / packedBcdPlmnLenBytes;
+        String[] ret = new String[numPlmns];
+        for (int i = 0; i < numPlmns; i++) {
+            ret[i] = IccUtils.bcdPlmnToString(data, i * packedBcdPlmnLenBytes);
+        }
+        if (VDBG) logv(description + " PLMNs: " + Arrays.toString(ret));
+        return ret;
+    }
+
+    /**
      * check to see if Mailbox Number is allocated and activated in CPHS SST
      */
     private boolean isCphsMailboxEnabled() {
@@ -2004,6 +2120,11 @@ public class SIMRecords extends IccRecords {
         pw.println(" mUsimServiceTable=" + mUsimServiceTable);
         pw.println(" mGid1=" + mGid1);
         pw.println(" mGid2=" + mGid2);
+        pw.println(" mPlmnActRecords[]=" + Arrays.toString(mPlmnActRecords));
+        pw.println(" mOplmnActRecords[]=" + Arrays.toString(mOplmnActRecords));
+        pw.println(" mHplmnActRecords[]=" + Arrays.toString(mHplmnActRecords));
+        pw.println(" mFplmns[]=" + Arrays.toString(mFplmns));
+        pw.println(" mEhplmns[]=" + Arrays.toString(mEhplmns));
         pw.flush();
     }
 }

@@ -16,8 +16,8 @@
 
 package com.android.internal.telephony;
 
-import static android.telephony.TelephonyManager.PHONE_TYPE_CDMA;
 import static android.service.carrier.CarrierMessagingService.RECEIVE_OPTIONS_SKIP_NOTIFY_WHEN_CREDENTIAL_PROTECTED_STORAGE_UNAVAILABLE;
+import static android.telephony.TelephonyManager.PHONE_TYPE_CDMA;
 
 import android.app.Activity;
 import android.app.ActivityManagerNative;
@@ -34,6 +34,7 @@ import android.content.ContentUris;
 import android.content.ContentValues;
 import android.content.Context;
 import android.content.Intent;
+import android.content.IntentFilter;
 import android.content.pm.IPackageManager;
 import android.content.pm.PackageManager;
 import android.content.pm.ResolveInfo;
@@ -59,7 +60,6 @@ import android.service.carrier.CarrierMessagingService;
 import android.service.carrier.ICarrierMessagingCallback;
 import android.service.carrier.ICarrierMessagingService;
 import android.service.carrier.MessagePdu;
-import android.service.notification.StatusBarNotification;
 import android.telephony.CarrierMessagingServiceManager;
 import android.telephony.Rlog;
 import android.telephony.SmsManager;
@@ -79,7 +79,9 @@ import com.android.internal.util.StateMachine;
 import java.io.ByteArrayOutputStream;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * This class broadcasts incoming SMS messages to interested apps after storing them in
@@ -114,8 +116,18 @@ public abstract class InboundSmsHandler extends StateMachine {
     private static final String[] PDU_SEQUENCE_PORT_PROJECTION = {
             "pdu",
             "sequence",
-            "destination_port"
+            "destination_port",
+            "display_originating_addr"
     };
+
+    /** Mapping from DB COLUMN to PDU_SEQUENCE_PORT PROJECTION index */
+    private static final Map<Integer, Integer> PDU_SEQUENCE_PORT_PROJECTION_INDEX_MAPPING =
+            new HashMap<Integer, Integer>() {{
+                put(PDU_COLUMN, 0);
+                put(SEQUENCE_COLUMN, 1);
+                put(DESTINATION_PORT_COLUMN, 2);
+                put(DISPLAY_ADDRESS_COLUMN, 3);
+    }};
 
     public static final int PDU_COLUMN = 0;
     public static final int SEQUENCE_COLUMN = 1;
@@ -126,6 +138,7 @@ public abstract class InboundSmsHandler extends StateMachine {
     public static final int ADDRESS_COLUMN = 6;
     public static final int ID_COLUMN = 7;
     public static final int MESSAGE_BODY_COLUMN = 8;
+    public static final int DISPLAY_ADDRESS_COLUMN = 9;
 
     public static final String SELECT_BY_ID = "_id=?";
     public static final String SELECT_BY_REFERENCE = "address=? AND reference_number=? AND " +
@@ -209,6 +222,9 @@ public abstract class InboundSmsHandler extends StateMachine {
     private final int DELETE_PERMANENTLY = 1;
     // Only mark deleted, but keep in db for message de-duping
     private final int MARK_DELETED = 2;
+
+    private static String ACTION_OPEN_SMS_APP =
+        "com.android.internal.telephony.OPEN_DEFAULT_SMS_APP";
 
     /**
      * Create a new SMS broadcast helper.
@@ -671,7 +687,8 @@ public abstract class InboundSmsHandler extends StateMachine {
 
             tracker = TelephonyComponentFactory.getInstance().makeInboundSmsTracker(sms.getPdu(),
                     sms.getTimestampMillis(), destPort, is3gpp2(), false,
-                    sms.getDisplayOriginatingAddress(), sms.getMessageBody());
+                    sms.getOriginatingAddress(), sms.getDisplayOriginatingAddress(),
+                    sms.getMessageBody());
         } else {
             // Create a tracker for this message segment.
             SmsHeader.ConcatRef concatRef = smsHeader.concatRef;
@@ -679,7 +696,7 @@ public abstract class InboundSmsHandler extends StateMachine {
             int destPort = (portAddrs != null ? portAddrs.destPort : -1);
 
             tracker = TelephonyComponentFactory.getInstance().makeInboundSmsTracker(sms.getPdu(),
-                    sms.getTimestampMillis(), destPort, is3gpp2(),
+                    sms.getTimestampMillis(), destPort, is3gpp2(), sms.getOriginatingAddress(),
                     sms.getDisplayOriginatingAddress(), concatRef.refNumber, concatRef.seqNumber,
                     concatRef.msgCount, false, sms.getMessageBody());
         }
@@ -725,10 +742,12 @@ public abstract class InboundSmsHandler extends StateMachine {
         int messageCount = tracker.getMessageCount();
         byte[][] pdus;
         int destPort = tracker.getDestPort();
+        boolean block = false;
 
         if (messageCount == 1) {
             // single-part message
             pdus = new byte[][]{tracker.getPdu()};
+            block = BlockChecker.isBlocked(mContext, tracker.getDisplayAddress());
         } else {
             // multi-part message
             Cursor cursor = null;
@@ -757,19 +776,35 @@ public abstract class InboundSmsHandler extends StateMachine {
                 pdus = new byte[messageCount][];
                 while (cursor.moveToNext()) {
                     // subtract offset to convert sequence to 0-based array index
-                    int index = cursor.getInt(SEQUENCE_COLUMN) - tracker.getIndexOffset();
+                    int index = cursor.getInt(PDU_SEQUENCE_PORT_PROJECTION_INDEX_MAPPING
+                            .get(SEQUENCE_COLUMN)) - tracker.getIndexOffset();
 
-                    pdus[index] = HexDump.hexStringToByteArray(cursor.getString(PDU_COLUMN));
+                    pdus[index] = HexDump.hexStringToByteArray(cursor.getString(
+                            PDU_SEQUENCE_PORT_PROJECTION_INDEX_MAPPING.get(PDU_COLUMN)));
 
                     // Read the destination port from the first segment (needed for CDMA WAP PDU).
                     // It's not a bad idea to prefer the port from the first segment in other cases.
-                    if (index == 0 && !cursor.isNull(DESTINATION_PORT_COLUMN)) {
-                        int port = cursor.getInt(DESTINATION_PORT_COLUMN);
+                    if (index == 0 && !cursor.isNull(PDU_SEQUENCE_PORT_PROJECTION_INDEX_MAPPING
+                            .get(DESTINATION_PORT_COLUMN))) {
+                        int port = cursor.getInt(PDU_SEQUENCE_PORT_PROJECTION_INDEX_MAPPING
+                                .get(DESTINATION_PORT_COLUMN));
                         // strip format flags and convert to real port number, or -1
                         port = InboundSmsTracker.getRealDestPort(port);
                         if (port != -1) {
                             destPort = port;
                         }
+                    }
+                    // check if display address should be blocked or not
+                    if (!block) {
+                        // Depending on the nature of the gateway, the display origination address
+                        // is either derived from the content of the SMS TP-OA field, or the TP-OA
+                        // field contains a generic gateway address and the from address is added
+                        // at the beginning in the message body. In that case only the first SMS
+                        // (part of Multi-SMS) comes with the display originating address which
+                        // could be used for block checking purpose.
+                        block = BlockChecker.isBlocked(mContext,
+                                cursor.getString(PDU_SEQUENCE_PORT_PROJECTION_INDEX_MAPPING
+                                        .get(DISPLAY_ADDRESS_COLUMN)));
                     }
                 }
             } catch (SQLException e) {
@@ -790,11 +825,11 @@ public abstract class InboundSmsHandler extends StateMachine {
             return false;
         }
 
-        if (!mUserManager.isUserUnlocked()) {
-            return processMessagePartWithUserLocked(tracker, pdus, destPort);
-        }
-
         SmsBroadcastReceiver resultReceiver = new SmsBroadcastReceiver(tracker);
+
+        if (!mUserManager.isUserUnlocked()) {
+            return processMessagePartWithUserLocked(tracker, pdus, destPort, resultReceiver);
+        }
 
         if (destPort == SmsHeader.PORT_WAP_PUSH) {
             // Build up the data stream
@@ -824,16 +859,16 @@ public abstract class InboundSmsHandler extends StateMachine {
             }
         }
 
-        if (BlockChecker.isBlocked(mContext, tracker.getAddress())) {
+        if (block) {
             deleteFromRawTable(tracker.getDeleteWhere(), tracker.getDeleteWhereArgs(),
                     DELETE_PERMANENTLY);
             return false;
         }
 
-        boolean carrierAppInvoked = filterSmsWithCarrierOrSystemApp(
+        boolean filterInvoked = filterSms(
             pdus, destPort, tracker, resultReceiver, true /* userUnlocked */);
 
-        if (!carrierAppInvoked) {
+        if (!filterInvoked) {
             dispatchSmsDeliveryIntent(pdus, tracker.getFormat(), destPort, resultReceiver);
         }
 
@@ -850,7 +885,7 @@ public abstract class InboundSmsHandler extends StateMachine {
      * @return true if an ordered broadcast was sent to the carrier app; false otherwise.
      */
     private boolean processMessagePartWithUserLocked(InboundSmsTracker tracker,
-            byte[][] pdus, int destPort) {
+            byte[][] pdus, int destPort, SmsBroadcastReceiver resultReceiver) {
         log("Credential-encrypted storage not available. Port: " + destPort);
         if (destPort == SmsHeader.PORT_WAP_PUSH && mWapPush.isWapPushForMms(pdus[0], this)) {
             showNewMessageNotification();
@@ -858,13 +893,13 @@ public abstract class InboundSmsHandler extends StateMachine {
         }
         if (destPort == -1) {
             // This is a regular SMS - hand it to the carrier or system app for filtering.
-            boolean carrierAppInvoked = filterSmsWithCarrierOrSystemApp(
-                pdus, destPort, tracker, null, false /* userUnlocked */);
-            if (carrierAppInvoked) {
-                // Carrier app invoked, wait for it to return the result.
+            boolean filterInvoked = filterSms(
+                pdus, destPort, tracker, resultReceiver, false /* userUnlocked */);
+            if (filterInvoked) {
+                // filter invoked, wait for it to return the result.
                 return true;
             } else {
-                // Carrier app not invoked, show the notification and do nothing further.
+                // filter not invoked, show the notification and do nothing further.
                 showNewMessageNotification();
                 return false;
             }
@@ -878,8 +913,11 @@ public abstract class InboundSmsHandler extends StateMachine {
             return;
         }
         log("Show new message notification.");
-        Intent intent = Intent.makeMainSelectorActivity(
-            Intent.ACTION_MAIN, Intent.CATEGORY_APP_MESSAGING);
+        PendingIntent intent = PendingIntent.getBroadcast(
+            mContext,
+            0,
+            new Intent(ACTION_OPEN_SMS_APP),
+            PendingIntent.FLAG_ONE_SHOT);
         Notification.Builder mBuilder = new Notification.Builder(mContext)
                 .setSmallIcon(com.android.internal.R.drawable.sym_action_chat)
                 .setAutoCancel(true)
@@ -887,7 +925,7 @@ public abstract class InboundSmsHandler extends StateMachine {
                 .setDefaults(Notification.DEFAULT_ALL)
                 .setContentTitle(mContext.getString(R.string.new_sms_notification_title))
                 .setContentText(mContext.getString(R.string.new_sms_notification_content))
-                .setContentIntent(PendingIntent.getActivity(mContext, 1, intent, 0));
+                .setContentIntent(intent);
         NotificationManager mNotificationManager =
             (NotificationManager) mContext.getSystemService(Context.NOTIFICATION_SERVICE);
         mNotificationManager.notify(
@@ -902,10 +940,24 @@ public abstract class InboundSmsHandler extends StateMachine {
     }
 
     /**
-     * Filters the SMS with carrier or system app.
-     * @return true if the carrier or system app is invoked, false otherwise.
+     * Filters the SMS.
+     *
+     * <p>currently 3 filters exists: the carrier package, the system package, and the
+     * VisualVoicemailSmsFilter.
+     *
+     * <p>The filtering process is:
+     *
+     * <p>If the carrier package exists, the SMS will be filtered with it first. If the carrier
+     * package did not drop the SMS, then the VisualVoicemailSmsFilter will filter it in the
+     * callback.
+     *
+     * <p>If the carrier package does not exists, we will let the VisualVoicemailSmsFilter filter
+     * it. If the SMS passed the filter, then we will try to find the system package to do the
+     * filtering.
+     *
+     * @return true if a filter is invoked and the SMS processing flow is diverted, false otherwise.
      */
-    private boolean filterSmsWithCarrierOrSystemApp(byte[][] pdus, int destPort,
+    private boolean filterSms(byte[][] pdus, int destPort,
         InboundSmsTracker tracker, SmsBroadcastReceiver resultReceiver, boolean userUnlocked) {
         List<String> carrierPackages = null;
         UiccCard card = UiccController.getInstance().getUiccCard(mPhone.getPhoneId());
@@ -916,26 +968,41 @@ public abstract class InboundSmsHandler extends StateMachine {
         } else {
             loge("UiccCard not initialized.");
         }
-        List<String> systemPackages =
-            getSystemAppForIntent(new Intent(CarrierMessagingService.SERVICE_INTERFACE));
 
         if (carrierPackages != null && carrierPackages.size() == 1) {
             log("Found carrier package.");
             CarrierSmsFilter smsFilter = new CarrierSmsFilter(pdus, destPort,
                     tracker.getFormat(), resultReceiver);
-            CarrierSmsFilterCallback smsFilterCallback = new CarrierSmsFilterCallback(smsFilter, userUnlocked);
+            CarrierSmsFilterCallback smsFilterCallback = new CarrierSmsFilterCallback(smsFilter,
+                    userUnlocked);
             smsFilter.filterSms(carrierPackages.get(0), smsFilterCallback);
             return true;
-        } else if (systemPackages != null && systemPackages.size() == 1) {
+        }
+
+        // It is possible that carrier app is not present as a CarrierPackage, but instead as a
+        // system app
+        List<String> systemPackages =
+                getSystemAppForIntent(new Intent(CarrierMessagingService.SERVICE_INTERFACE));
+
+        if (systemPackages != null && systemPackages.size() == 1) {
             log("Found system package.");
             CarrierSmsFilter smsFilter = new CarrierSmsFilter(pdus, destPort,
                     tracker.getFormat(), resultReceiver);
-            CarrierSmsFilterCallback smsFilterCallback = new CarrierSmsFilterCallback(smsFilter, userUnlocked);
+            CarrierSmsFilterCallback smsFilterCallback = new CarrierSmsFilterCallback(smsFilter,
+                    userUnlocked);
             smsFilter.filterSms(systemPackages.get(0), smsFilterCallback);
             return true;
         }
         logv("Unable to find carrier package: " + carrierPackages
                 + ", nor systemPackages: " + systemPackages);
+
+        if (VisualVoicemailSmsFilter.filter(
+                mContext, pdus, tracker.getFormat(), destPort, mPhone.getSubId())) {
+            log("Visual voicemail SMS dropped");
+            dropSms(resultReceiver);
+            return true;
+        }
+
         return false;
     }
 
@@ -1108,6 +1175,67 @@ public abstract class InboundSmsHandler extends StateMachine {
     }
 
     /**
+     * Function to check if message should be dropped because same message has already been
+     * received. In certain cases it checks for similar messages instead of exact same (cases where
+     * keeping both messages in db can cause ambiguity)
+     * @return true if duplicate exists, false otherwise
+     */
+    private boolean duplicateExists(InboundSmsTracker tracker) throws SQLException {
+        String address = tracker.getAddress();
+        // convert to strings for query
+        String refNumber = Integer.toString(tracker.getReferenceNumber());
+        String count = Integer.toString(tracker.getMessageCount());
+        // sequence numbers are 1-based except for CDMA WAP, which is 0-based
+        int sequence = tracker.getSequenceNumber();
+        String seqNumber = Integer.toString(sequence);
+        String date = Long.toString(tracker.getTimestamp());
+        String messageBody = tracker.getMessageBody();
+        String where;
+        if (tracker.getMessageCount() == 1) {
+            where = "address=? AND reference_number=? AND count=? AND sequence=? AND " +
+                    "date=? AND message_body=?";
+        } else {
+            // for multi-part messages, deduping should also be done against undeleted
+            // segments that can cause ambiguity when contacenating the segments, that is,
+            // segments with same address, reference_number, count and sequence
+            where = "address=? AND reference_number=? AND count=? AND sequence=? AND " +
+                    "((date=? AND message_body=?) OR deleted=0)";
+        }
+
+        Cursor cursor = null;
+        try {
+            // Check for duplicate message segments
+            cursor = mResolver.query(sRawUri, PDU_PROJECTION, where,
+                    new String[]{address, refNumber, count, seqNumber, date, messageBody},
+                    null);
+
+            // moveToNext() returns false if no duplicates were found
+            if (cursor != null && cursor.moveToNext()) {
+                loge("Discarding duplicate message segment, refNumber=" + refNumber
+                        + " seqNumber=" + seqNumber + " count=" + count);
+                if (VDBG) {
+                    loge("address=" + address + " date=" + date + " messageBody=" +
+                            messageBody);
+                }
+                String oldPduString = cursor.getString(PDU_COLUMN);
+                byte[] pdu = tracker.getPdu();
+                byte[] oldPdu = HexDump.hexStringToByteArray(oldPduString);
+                if (!Arrays.equals(oldPdu, tracker.getPdu())) {
+                    loge("Warning: dup message segment PDU of length " + pdu.length
+                            + " is different from existing PDU of length " + oldPdu.length);
+                }
+                return true;   // reject message
+            }
+        } finally {
+            if (cursor != null) {
+                cursor.close();
+            }
+        }
+
+        return false;
+    }
+
+    /**
      * Insert a message PDU into the raw table so we can acknowledge it immediately.
      * If the device crashes before the broadcast to listeners completes, it will be delivered
      * from the raw table on the next device boot. For single-part messages, the deleteWhere
@@ -1118,57 +1246,22 @@ public abstract class InboundSmsHandler extends StateMachine {
      * @return true on success; false on failure to write to database
      */
     private int addTrackerToRawTable(InboundSmsTracker tracker, boolean deDup) {
-        String address = tracker.getAddress();
-        String refNumber = Integer.toString(tracker.getReferenceNumber());
-        String count = Integer.toString(tracker.getMessageCount());
         if (deDup) {
-            // check for duplicate message segments
-            Cursor cursor = null;
             try {
-                // sequence numbers are 1-based except for CDMA WAP, which is 0-based
-                int sequence = tracker.getSequenceNumber();
-
-                // convert to strings for query
-                String seqNumber = Integer.toString(sequence);
-                String date = Long.toString(tracker.getTimestamp());
-                String messageBody = tracker.getMessageBody();
-
-                // Check for duplicate message segments
-                cursor = mResolver.query(sRawUri, PDU_PROJECTION,
-                        "address=? AND reference_number=? AND count=? AND sequence=? AND date=? " +
-                                "AND message_body=?",
-                        new String[]{address, refNumber, count, seqNumber, date, messageBody},
-                        null);
-
-                // moveToNext() returns false if no duplicates were found
-                if (cursor.moveToNext()) {
-                    loge("Discarding duplicate message segment, refNumber=" + refNumber
-                            + " seqNumber=" + seqNumber + " count=" + count);
-                    if (VDBG) {
-                        loge("address=" + address + " date=" + date + " messageBody=" +
-                                messageBody);
-                    }
-                    String oldPduString = cursor.getString(PDU_COLUMN);
-                    byte[] pdu = tracker.getPdu();
-                    byte[] oldPdu = HexDump.hexStringToByteArray(oldPduString);
-                    if (!Arrays.equals(oldPdu, tracker.getPdu())) {
-                        loge("Warning: dup message segment PDU of length " + pdu.length
-                                + " is different from existing PDU of length " + oldPdu.length);
-                    }
+                if (duplicateExists(tracker)) {
                     return Intents.RESULT_SMS_DUPLICATED;   // reject message
                 }
             } catch (SQLException e) {
                 loge("Can't access SMS database", e);
                 return Intents.RESULT_SMS_GENERIC_ERROR;    // reject message
-            } finally {
-                if (cursor != null) {
-                    cursor.close();
-                }
             }
         } else {
             logd("Skipped message de-duping logic");
         }
 
+        String address = tracker.getAddress();
+        String refNumber = Integer.toString(tracker.getReferenceNumber());
+        String count = Integer.toString(tracker.getMessageCount());
         ContentValues values = tracker.getContentValues();
 
         if (VDBG) log("adding content values to raw table: " + values.toString());
@@ -1349,32 +1442,38 @@ public abstract class InboundSmsHandler extends StateMachine {
         @Override
         public void onFilterComplete(int result) {
             mSmsFilter.disposeConnection(mContext);
-
-            logv("onFilterComplete: result is "+ result);
-            if ((result & CarrierMessagingService.RECEIVE_OPTIONS_DROP) == 0) {
-                if (mUserUnlocked) {
-                    dispatchSmsDeliveryIntent(mSmsFilter.mPdus, mSmsFilter.mSmsFormat,
-                            mSmsFilter.mDestPort, mSmsFilter.mSmsBroadcastReceiver);
-                } else {
-                    // Don't do anything further, leave the message in the raw table if the
-                    // credential-encrypted storage is still locked and show the new message
-                    // notification if the message is visible to the user.
-                    if (!isSkipNotifyFlagSet(result)) {
-                        showNewMessageNotification();
+            // Calling identity was the CarrierMessagingService in this callback, change it back to
+            // ours. This is required for dropSms() and VisualVoicemailSmsFilter.filter().
+            long token = Binder.clearCallingIdentity();
+            try {
+                logv("onFilterComplete: result is " + result);
+                if ((result & CarrierMessagingService.RECEIVE_OPTIONS_DROP) == 0) {
+                    if (VisualVoicemailSmsFilter.filter(mContext, mSmsFilter.mPdus,
+                            mSmsFilter.mSmsFormat, mSmsFilter.mDestPort, mPhone.getSubId())) {
+                        log("Visual voicemail SMS dropped");
+                        dropSms(mSmsFilter.mSmsBroadcastReceiver);
+                        return;
                     }
-                    sendMessage(EVENT_BROADCAST_COMPLETE);
+
+                    if (mUserUnlocked) {
+                        dispatchSmsDeliveryIntent(mSmsFilter.mPdus, mSmsFilter.mSmsFormat,
+                                mSmsFilter.mDestPort, mSmsFilter.mSmsBroadcastReceiver);
+                    } else {
+                        // Don't do anything further, leave the message in the raw table if the
+                        // credential-encrypted storage is still locked and show the new message
+                        // notification if the message is visible to the user.
+                        if (!isSkipNotifyFlagSet(result)) {
+                            showNewMessageNotification();
+                        }
+                        sendMessage(EVENT_BROADCAST_COMPLETE);
+                    }
+                } else {
+                    // Drop this SMS.
+                    dropSms(mSmsFilter.mSmsBroadcastReceiver);
                 }
-            } else {
-                // Drop this SMS.
-                final long token = Binder.clearCallingIdentity();
-                try {
-                    // Needs phone package permissions.
-                    deleteFromRawTable(mSmsFilter.mSmsBroadcastReceiver.mDeleteWhere,
-                            mSmsFilter.mSmsBroadcastReceiver.mDeleteWhereArgs, MARK_DELETED);
-                } finally {
-                    Binder.restoreCallingIdentity(token);
-                }
-                sendMessage(EVENT_BROADCAST_COMPLETE);
+            } finally {
+                // return back to the CarrierMessagingService, restore the calling identity.
+                Binder.restoreCallingIdentity(token);
             }
         }
 
@@ -1397,6 +1496,12 @@ public abstract class InboundSmsHandler extends StateMachine {
         public void onDownloadMmsComplete(int result) {
             loge("Unexpected onDownloadMmsComplete call with result: " + result);
         }
+    }
+
+    private void dropSms(SmsBroadcastReceiver receiver) {
+        // Needs phone package permissions.
+        deleteFromRawTable(receiver.mDeleteWhere, receiver.mDeleteWhereArgs, MARK_DELETED);
+        sendMessage(EVENT_BROADCAST_COMPLETE);
     }
 
     /** Checks whether the flag to skip new message notification is set in the bitmask returned
@@ -1529,5 +1634,29 @@ public abstract class InboundSmsHandler extends StateMachine {
     @VisibleForTesting
     public int getWakeLockTimeout() {
         return WAKELOCK_TIMEOUT;
+    }
+
+    /**
+     * Handler for the broadcast sent when the new message notification is clicked. It launches the
+     * default SMS app.
+     */
+    private static class NewMessageNotificationActionReceiver extends BroadcastReceiver {
+        @Override
+        public void onReceive(Context context, Intent intent) {
+            if (ACTION_OPEN_SMS_APP.equals(intent.getAction())) {
+                context.startActivity(context.getPackageManager().getLaunchIntentForPackage(
+                    Telephony.Sms.getDefaultSmsPackage(context)));
+            }
+        }
+    }
+
+    /**
+     * Registers the broadcast receiver to launch the default SMS app when the user clicks the
+     * new message notification.
+     */
+    static void registerNewMessageNotificationActionHandler(Context context) {
+        IntentFilter userFilter = new IntentFilter();
+        userFilter.addAction(ACTION_OPEN_SMS_APP);
+        context.registerReceiver(new NewMessageNotificationActionReceiver(), userFilter);
     }
 }
